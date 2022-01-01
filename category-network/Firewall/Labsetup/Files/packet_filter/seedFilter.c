@@ -1,3 +1,4 @@
+#include <linux/in.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/netfilter.h>
@@ -9,7 +10,8 @@
 #include <linux/inet.h>
 
 
-static struct nf_hook_ops hook1, hook2; 
+static struct nf_hook_ops hook1, hook2, hook3, hook4;
+static struct nf_hook_ops hooks[NF_INET_NUMHOOKS];
 
 
 unsigned int blockUDP(void *priv, struct sk_buff *skb,
@@ -34,6 +36,43 @@ unsigned int blockUDP(void *priv, struct sk_buff *skb,
             printk(KERN_WARNING "*** Dropping %pI4 (UDP), port %d\n", &(iph->daddr), port);
             return NF_DROP;
         }
+   }
+   return NF_ACCEPT;
+}
+
+unsigned int blockPing(void *priv, struct sk_buff *skb,
+                       const struct nf_hook_state *state)
+{
+   struct iphdr *iph;
+
+   if (!skb) return NF_ACCEPT;
+
+   iph = ip_hdr(skb);
+
+   if (iph->protocol == IPPROTO_ICMP) {
+      printk(KERN_WARNING "*** Dropping ICMP from %pI4 to %pI4\n", &(iph->saddr), &(iph->daddr));
+      return NF_DROP;
+   }
+   return NF_ACCEPT;
+}
+
+unsigned int blockTelnet(void *priv, struct sk_buff *skb,
+                       const struct nf_hook_state *state)
+{
+   struct iphdr *iph;
+   struct tcphdr *tcph;
+   u16 port = 23;
+
+   if (!skb) return NF_ACCEPT;
+
+   iph = ip_hdr(skb);
+
+   if (iph->protocol == IPPROTO_TCP) {
+      tcph = tcp_hdr(skb);
+      if (ntohs(tcph->dest) == port) {
+         printk(KERN_WARNING "*** Dropping Telnet from %pI4:%d to %pI4:%d\n", &(iph->saddr), ntohs(tcph->source), &(iph->daddr), port);
+         return NF_DROP;
+      }
    }
    return NF_ACCEPT;
 }
@@ -72,13 +111,14 @@ unsigned int printInfo(void *priv, struct sk_buff *skb,
 
 
 int registerFilter(void) {
+   int i;
    printk(KERN_INFO "Registering filters.\n");
 
-   hook1.hook = printInfo;
-   hook1.hooknum = NF_INET_LOCAL_OUT;
-   hook1.pf = PF_INET;
-   hook1.priority = NF_IP_PRI_FIRST;
-   nf_register_net_hook(&init_net, &hook1);
+   // hook1.hook = printInfo;
+   // hook1.hooknum = NF_INET_LOCAL_OUT;
+   // hook1.pf = PF_INET;
+   // hook1.priority = NF_IP_PRI_FIRST;
+   // nf_register_net_hook(&init_net, &hook1);
 
    hook2.hook = blockUDP;
    hook2.hooknum = NF_INET_POST_ROUTING;
@@ -86,13 +126,39 @@ int registerFilter(void) {
    hook2.priority = NF_IP_PRI_FIRST;
    nf_register_net_hook(&init_net, &hook2);
 
+   hook3.hook = blockPing;
+   hook3.hooknum = NF_INET_LOCAL_IN;
+   hook3.pf = PF_INET;
+   hook3.priority = NF_IP_PRI_FIRST;
+   nf_register_net_hook(&init_net, &hook3);
+
+   hook4.hook = blockTelnet;
+   hook4.hooknum = NF_INET_LOCAL_IN;
+   hook4.pf = PF_INET;
+   hook4.priority = NF_IP_PRI_FIRST;
+   nf_register_net_hook(&init_net, &hook4);
+
+   for (i = 0; i < NF_INET_NUMHOOKS; i++) {
+      hooks[i].hook = printInfo;
+      hooks[i].hooknum = i;
+      hooks[i].pf = PF_INET;
+      hooks[i].priority = NF_IP_PRI_FIRST;
+      nf_register_net_hook(&init_net, &hooks[i]);
+   }
+
    return 0;
 }
 
 void removeFilter(void) {
+   int i;
    printk(KERN_INFO "The filters are being removed.\n");
-   nf_unregister_net_hook(&init_net, &hook1);
+   // nf_unregister_net_hook(&init_net, &hook1);
    nf_unregister_net_hook(&init_net, &hook2);
+   nf_unregister_net_hook(&init_net, &hook3);
+   nf_unregister_net_hook(&init_net, &hook4);
+   for (i = 0; i < NF_INET_NUMHOOKS; i++) {
+      nf_unregister_net_hook(&init_net, &hooks[i]);
+   }
 }
 
 module_init(registerFilter);
